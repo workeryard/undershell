@@ -1,6 +1,6 @@
 {
   "name": "@workeryard/undershell",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "An SSH client for Cloudflare Workers: exec, shells, SFTP and jump hosts over any byte stream, with WebCrypto alone.",
   "type": "module",
   "license": "MIT",

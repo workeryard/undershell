@@ -5,6 +5,23 @@ Notable changes, newest first. The format follows
 [Semantic Versioning](https://semver.org/) — until 1.0.0, a minor version may
 change the API.
 
+## 0.1.1 — 2026-10-21
+
+The code is 0.1.0's; this release is for what npm shows.
+
+### Fixed
+
+- The readme said OpenSSH turned off SHA-1 by default in 8.8. Only
+  `ssh-rsa` signatures went then; `hmac-sha1` and the group14-sha1 exchange
+  are still offered, beside SHA-2 ones. It now says so, and names RouterOS
+  6 as the server that offers nothing else.
+
+### Added
+
+- `docs/decisions.md`, linked from the readme: what was put in, what was
+  left out, and why, each with what it rests on; and what is still open,
+  from finite-field Diffie-Hellman for RouterOS 6 to keepalives.
+
 ## 0.1.0 — 2026-10-21
 
 The first release, from the SSH client Flowker carried in `packages/ssh`.

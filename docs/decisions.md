@@ -92,6 +92,27 @@ derives its key with MD5, and PKCS#8's PBES2 needs a parser of its own.
 `ssh-keygen -p` rewrites either as an OpenSSH file, which is read with its
 passphrase.
 
+## Open
+
+**diffie-hellman-group-exchange-sha256 and group14-sha256.** RouterOS 6
+with `strong-crypto` offers SHA-2 MACs but no elliptic-curve exchange, so
+it would take a finite-field one. WebCrypto has none; BigInt modular
+exponentiation would do, and has to be measured for CPU on a Worker before
+it is taken.
+
+**Keepalives.** A shell left idle behind a NAT or a load balancer can be
+dropped without either side noticing. OpenSSH's client sends
+keepalive@openssh.com on a timer; a Worker's request has its own lifetime,
+so whether a timer belongs here or in the caller is not settled.
+
+**mlkem768x25519-sha256**, which OpenSSH 10 and RouterOS 7 prefer, once
+WebCrypto in Node and workerd has ML-KEM.
+
+**A build for Node.** The package ships TypeScript source, read by a
+bundler or tsx; a project on `NodeNext`, or plain `node`, cannot import it.
+underfetch has the same question open, and the answer should be the same
+for both.
+
 ## Found along the way
 
 - RouterOS's console asks the terminal for the cursor position
