@@ -1,0 +1,54 @@
+{
+  "name": "@workeryard/undershell",
+  "version": "0.0.0",
+  "description": "An SSH client for Cloudflare Workers: exec, shells, SFTP and jump hosts over any byte stream, with WebCrypto alone.",
+  "type": "module",
+  "license": "MIT",
+  "author": "0x4d4d4f (https://github.com/0x4d4d4f)",
+  "homepage": "https://github.com/workeryard/undershell#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/workeryard/undershell.git"
+  },
+  "bugs": {
+    "url": "https://github.com/workeryard/undershell/issues"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "ssh",
+    "sftp",
+    "ssh-client",
+    "workerd",
+    "webcrypto",
+    "jump-host",
+    "cloudflare-tunnel"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "bcrypt-pbkdf": "^1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.11"
+  },
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

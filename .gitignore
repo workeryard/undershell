@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+
+# @cloudflare/workers-types for make typecheck-workers, fetched, never committed.
+.cache/
