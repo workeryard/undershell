@@ -3,3 +3,7 @@ node_modules/
 
 # @cloudflare/workers-types for make typecheck-workers, fetched, never committed.
 .cache/
+
+# The deployed probe Worker's token (make probe-token), and wrangler dev's copy; never committed.
+.probe-token
+.dev.vars

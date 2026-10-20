@@ -12,15 +12,33 @@ import { webSocketStream, type WebSocketLike } from '../carriers/websocket';
 import { SshClient, type ConnectOptions, type JumpOptions } from '../client';
 import type { ByteSocket } from '../transport/buffered';
 
-/** Opens a TCP connection, settled once it is up. */
-export async function openSocket(hostname: string, port = 22): Promise<ByteSocket> {
+/**
+ * Opens a TCP connection, settled once it is up. A port that drops packets
+ * never answers at all, so the wait is bounded: 10 s unless told otherwise.
+ */
+export async function openSocket(
+  hostname: string,
+  port = 22,
+  timeoutMs = 10_000,
+): Promise<ByteSocket> {
   const socket = tcp({ hostname, port });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await socket.opened;
+    await Promise.race([
+      socket.opened,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          void socket.close().catch(() => {});
+          reject(new Error(`no answer within ${timeoutMs} ms`));
+        }, timeoutMs);
+      }),
+    ]);
   } catch (error) {
     const said = error instanceof Error ? error.message : String(error);
-    // Production refuses Cloudflare's own address ranges with this, and only
-    // the "HTTP-based service" part tells it apart from a dead address.
+    // Production refuses Cloudflare's own address ranges. On ports 80 and 443
+    // it says so ("HTTP-based service"); on 22 it says only "proxy request
+    // failed, cannot connect to the specified address" (seen 2026-10-20),
+    // which a dead address can get too, so that one earns a hint, not a verdict.
     if (/HTTP-based service/i.test(said)) {
       throw new Error(
         `could not connect to ${hostname}:${port}: a Worker may not open TCP connections to Cloudflare's ` +
@@ -28,7 +46,12 @@ export async function openSocket(hostname: string, port = 22): Promise<ByteSocke
         { cause: error },
       );
     }
-    throw new Error(`could not connect to ${hostname}:${port}: ${said}`, { cause: error });
+    const hint = /proxy request failed/i.test(said)
+      ? '. If the host is behind Cloudflare, a Worker cannot reach it over TCP; Cloudflare Tunnel (`tunnel`) can'
+      : '';
+    throw new Error(`could not connect to ${hostname}:${port}: ${said}${hint}`, { cause: error });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
   return { readable: socket.readable, writable: socket.writable, close: () => socket.close() };
 }
@@ -98,7 +121,9 @@ export async function connect(options: WorkersConnectOptions): Promise<SshClient
   const final: JumpOptions = { ...target, host: host ?? '', port };
   const [first = final, ...rest] = [...jump, final];
   if (!tunnel && !first.host) throw new Error('connect needs a host, or a tunnel');
-  const socket = tunnel ? await openTunnel(tunnel) : await openSocket(first.host, first.port ?? 22);
+  const socket = tunnel
+    ? await openTunnel(tunnel)
+    : await openSocket(first.host, first.port ?? 22, options.timeoutMs);
   let client = await SshClient.connect({ ...first, socket });
   try {
     for (const hop of rest) client = await client.jump(hop);

@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The probe Worker for `make live`; see dev/worker.ts. Every request needs
+  // the PROBE_TOKEN secret, and without it the Worker answers nothing.
+  "name": "undershell-probe",
+  "main": "dev/worker.ts",
+  "compatibility_date": "2026-09-21",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+}
