@@ -61,8 +61,10 @@ Pin an exact version, and read the changelog before moving it.
   attempts to open such channels are refused. Local forwarding is here.
 - **A server.** It is a client only.
 - **SHA-1 anything**: no `ssh-rsa` signatures, no `hmac-sha1`, no
-  `diffie-hellman-group1`. OpenSSH dropped them by default in 8.8; a server
-  that offers nothing else needs upgrading, not this.
+  `diffie-hellman-group1` or `-group14-sha1`. OpenSSH has refused `ssh-rsa`
+  signatures by default since 8.8, and every server tested offers SHA-2
+  beside the rest; one that offers nothing else, such as RouterOS 6, is
+  refused with an error listing what it offered.
 
 ## Install
 
@@ -406,6 +408,9 @@ commit, stages it on npm with provenance, and opens the GitHub release; it
 goes live once a maintainer approves it on npmjs.com. The matrix and the live
 check need Docker and a Cloudflare account, so they run before the tag, not
 in the workflow.
+
+Why something was put in or left out is in
+[docs/decisions.md](docs/decisions.md).
 
 ## Licence
 
