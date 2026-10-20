@@ -178,15 +178,14 @@ async function publicKey(
       ? await parsePrivateKey(auth.privateKey, auth.passphrase)
       : auth.privateKey;
   // An RSA key can sign as rsa-sha2-512 or -256; the server says which it
-  // checks, if it says (RFC 8308). If it does not, both are tried.
+  // checks, if it says (RFC 8308). If it does not, both are tried. The list
+  // chooses between RSA's hashes and nothing else, as OpenSSH's client uses
+  // it: OpenSSH 7.4's lists only rsa-sha2-256,rsa-sha2-512 and still takes
+  // ed25519 and ECDSA keys, which a filter on it would never offer.
   const said = transport.serverSignatureAlgorithms;
-  const algorithms = said ? key.algorithms.filter((name) => said.includes(name)) : key.algorithms;
-  if (algorithms.length === 0) {
-    throw new AuthenticationError(
-      `the server verifies none of ${key.algorithms.join(', ')}; it lists ${said!.join(', ')}`,
-      [],
-    );
-  }
+  const listed =
+    said && key.type === 'ssh-rsa' ? key.algorithms.filter((name) => said.includes(name)) : [];
+  const algorithms = listed.length ? listed : key.algorithms;
 
   let outcome: Outcome = { ok: false, methods: [], partial: false };
   for (const algorithm of algorithms) {

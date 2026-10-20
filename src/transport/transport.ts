@@ -194,7 +194,8 @@ export class Transport {
       if (type === MSG.DISCONNECT) throw disconnected(payload);
       if (type === MSG.IGNORE || type === MSG.DEBUG || type === MSG.UNIMPLEMENTED) continue;
       if (type === MSG.EXT_INFO) {
-        this.serverSignatureAlgorithms = serverSignatureAlgorithms(payload) ?? this.serverSignatureAlgorithms;
+        this.serverSignatureAlgorithms =
+          serverSignatureAlgorithms(payload) ?? this.serverSignatureAlgorithms;
         continue;
       }
       if (type === MSG.GLOBAL_REQUEST) {

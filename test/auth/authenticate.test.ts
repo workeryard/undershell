@@ -136,6 +136,23 @@ describe('several methods', () => {
   });
 });
 
+describe('server-sig-algs', () => {
+  it("does not keep an ed25519 key from a server whose list leaves it out, as OpenSSH 7.4's does", async () => {
+    const ed25519 = readFileSync(new URL('../fixtures/keys/ed25519', import.meta.url), 'utf8');
+    const signed: string[] = [];
+    const { transport } = scripted(
+      (reader) => {
+        reader.bool();
+        signed.push(reader.text());
+        return [success()];
+      },
+      ['rsa-sha2-256', 'rsa-sha2-512'],
+    );
+    await authenticate(transport, 'u', [{ kind: 'privateKey', privateKey: ed25519 }]);
+    expect(signed).toEqual(['ssh-ed25519']);
+  });
+});
+
 describe('an RSA key', () => {
   const rsa = readFileSync(new URL('../fixtures/keys/rsa', import.meta.url), 'utf8');
 
