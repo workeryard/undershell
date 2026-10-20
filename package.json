@@ -24,7 +24,8 @@
     "cloudflare-tunnel"
   ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./workers": "./src/workers/index.ts"
   },
   "files": [
     "src",
@@ -34,15 +35,23 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "bcrypt-pbkdf": "^1.0.2"
+    "test": "vitest run",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "matrix": "tsx scripts/matrix.ts"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.2",
+    "bcrypt-pbkdf": "^1.0.2",
+    "eslint": "^10.13.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.11"
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.151.3"
   },
   "packageManager": "pnpm@10.33.4",
   "engines": {

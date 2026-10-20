@@ -1,37 +1,54 @@
 /**
- * Authentication (RFC 4252) and running one command (RFC 4254) on top of the
- * transport: what an automation step actually does — connect, prove who you
- * are, run something, read what it printed, hang up.
- *
- * There is no pty and no shell here. Those exist for a person at a terminal;
- * a workflow wants one command and its exit status, and asking for a pty would
- * mix stderr into stdout and invite programs to print colour codes.
+ * An SSH client over any `ByteSocket`: connect, prove the server is the one
+ * expected, prove who you are, then open what you need — commands, shells,
+ * SFTP, tunnels — on that one connection.
  */
 
-import { subtle } from "./crypto";
-import { Sftp } from "./sftp";
-import { parseOpenSshPrivateKey } from "./openssh-key";
-import { MSG, Transport, type ByteSocket, type HostKey, type Negotiated } from "./transport";
-import { Reader, Writer } from "./wire";
+import { authenticate, type Authentication } from './auth';
+import type { Channel } from './connection/channel';
+import { Connection } from './connection/connection';
+import { prepare, type Session, type SessionOptions } from './connection/session';
+import { Sftp } from './sftp/sftp';
+import type { Algorithms } from './transport/algorithms';
+import type { ByteSocket } from './transport/buffered';
+import { Transport, type HostKey, type Negotiated } from './transport/transport';
+import { Writer } from './wire';
 
-const SERVICE = "ssh-connection";
-const ED25519 = "ssh-ed25519";
-const WINDOW_SIZE = 2 * 1024 * 1024;
-const MAX_PACKET = 32 * 1024;
+/** Bastions a target may sit behind. Each is another handshake, and another host key to pin. */
+export const MAX_JUMPS = 3;
+const DEFAULT_TIMEOUT = 30_000;
 
-export type Authentication =
-  { kind: "privateKey"; privateKey: string; passphrase?: string } | { kind: "password"; password: string };
+export interface HostKeyCheck {
+  /**
+   * The host key this server should have, as `ssh-keygen -lf` prints it
+   * (the "SHA256:" is optional), or several during a key rotation.
+   */
+  hostKeyFingerprint?: string | readonly string[];
+  /**
+   * For callers who keep their own known_hosts: return true to accept the
+   * key. With a fingerprint as well, both have to agree.
+   */
+  verifyHostKey?(key: HostKey): boolean | Promise<boolean>;
+}
 
-export interface ConnectOptions {
+export interface ConnectOptions extends HostKeyCheck {
   socket: ByteSocket;
   username: string;
-  auth: Authentication;
-  /**
-   * The host key this credential expects, as `ssh-keygen -lf` prints it (the
-   * "SHA256:" is optional). Refusing to guess is the point: to an unattended
-   * run, an unknown host is a failure, not a prompt.
-   */
-  hostKeyFingerprint: string;
+  /** One method, or several tried in order until the server is satisfied. */
+  auth: Authentication | readonly Authentication[];
+  /** Narrower or reordered algorithm lists; see the readme's table. */
+  algorithms?: Algorithms;
+  /** What the server shows before login, such as /etc/issue.net. */
+  onBanner?: (message: string) => void;
+  /** For the handshake and authentication together. Default 30 s. */
+  timeoutMs?: number;
+  /** Re-key after this many bytes either way. Default 1 GiB, as RFC 4344 advises. */
+  rekeyAfterBytes?: number;
+}
+
+export interface JumpOptions extends Omit<ConnectOptions, 'socket'> {
+  host: string;
+  port?: number;
 }
 
 export interface CommandResult {
@@ -41,228 +58,244 @@ export interface CommandResult {
   exitStatus: number | null;
   /** The signal that killed it, when it was killed rather than exited. */
   exitSignal?: string;
-  /** True when output hit `maxOutputBytes` and the rest was dropped. */
+  /** True when output passed `maxOutputBytes` and the rest was dropped. */
   truncated: boolean;
 }
 
-export interface ExecOptions {
+export interface ExecOptions extends SessionOptions {
   /** Output is held in memory, so it is capped. Default 1 MiB per stream. */
   maxOutputBytes?: number;
+  /** Written to the command's stdin, which is then closed. Without it stdin is closed at once. */
+  stdin?: string | Uint8Array;
+  /** Aborting sends the command SIGKILL and closes its channel. */
+  signal?: AbortSignal;
 }
 
 function normalizeFingerprint(value: string): string {
   return value
     .trim()
-    .replace(/^SHA256:/i, "")
-    .replace(/=+$/, "");
+    .replace(/^SHA256:/i, '')
+    .replace(/=+$/, '');
+}
+
+/** The host key policy for one server: pinned, checked by the caller, or both. Never neither. */
+function hostKeyChecker(check: HostKeyCheck): (key: HostKey) => Promise<void> {
+  const pinned = [check.hostKeyFingerprint ?? []].flat().map(normalizeFingerprint).filter(Boolean);
+  if (pinned.length === 0 && !check.verifyHostKey) {
+    throw new Error(
+      'no host key fingerprint or verifyHostKey was given, and this client will not trust on first use',
+    );
+  }
+  return async (key) => {
+    if (pinned.length && !pinned.includes(key.fingerprint)) {
+      const expected = pinned.map((print) => `SHA256:${print}`).join(' or ');
+      throw new Error(
+        `the ${key.algorithm} host key is SHA256:${key.fingerprint}, not the ${expected} expected`,
+      );
+    }
+    if (check.verifyHostKey && !(await check.verifyHostKey(key))) {
+      throw new Error(
+        `the ${key.algorithm} host key SHA256:${key.fingerprint} was refused by verifyHostKey`,
+      );
+    }
+  };
+}
+
+async function withDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string,
+  onTimeout: () => unknown,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void onTimeout();
+      reject(new Error(`${what} took longer than ${ms} ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, deadline]);
+  } finally {
+    // A Worker's clearTimeout takes no undefined.
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 export class SshClient {
-  #nextChannel = 0;
+  #parent: SshClient | null = null;
 
-  private constructor(readonly transport: Transport) {}
+  private constructor(
+    private readonly connection: Connection,
+    private readonly depth: number,
+  ) {}
 
-  get hostKey(): HostKey | null {
-    return this.transport.hostKey;
+  get transport(): Transport {
+    return this.connection.transport;
   }
 
-  get negotiated(): Negotiated | null {
-    return this.transport.negotiated;
+  get hostKey(): HostKey {
+    return this.transport.hostKey!;
+  }
+
+  get negotiated(): Negotiated {
+    return this.transport.negotiated!;
   }
 
   get serverVersion(): string {
     return this.transport.serverVersion;
   }
 
-  static async connect(options: ConnectOptions): Promise<SshClient> {
-    const transport = new Transport(options.socket);
+  /** Settles when the connection ends, whether it was closed or it failed. */
+  get ended(): Promise<void> {
+    return this.connection.ended;
+  }
+
+  static connect(options: ConnectOptions): Promise<SshClient> {
+    return SshClient.#connect(options, 0);
+  }
+
+  static async #connect(options: ConnectOptions, depth: number): Promise<SshClient> {
+    let checkHostKey: (key: HostKey) => Promise<void>;
     try {
-      await transport.exchangeVersions();
-      await transport.keyExchange();
-
-      const expected = normalizeFingerprint(options.hostKeyFingerprint);
-      if (!expected) throw new Error("no host key fingerprint was given, and this client will not trust on first use");
-      const seen = transport.hostKey!.fingerprint;
-      if (seen !== expected) {
-        throw new Error(`the host key is SHA256:${seen}, not the SHA256:${expected} this credential expects`);
-      }
-
-      const client = new SshClient(transport);
-      await client.#authenticate(options.username, options.auth);
-      return client;
+      checkHostKey = hostKeyChecker(options);
     } catch (error) {
-      // A half-open connection is a leaked socket for the rest of the step.
+      await options.socket.close?.().catch(() => {});
+      throw error;
+    }
+    const transport = new Transport(options.socket, {
+      checkHostKey,
+      ...(options.algorithms && { algorithms: options.algorithms }),
+      ...(options.rekeyAfterBytes && { rekeyAfterBytes: options.rekeyAfterBytes }),
+    });
+    try {
+      const login = async () => {
+        await transport.handshake();
+        await authenticate(transport, options.username, [options.auth].flat(), options.onBanner);
+      };
+      await withDeadline(login(), options.timeoutMs ?? DEFAULT_TIMEOUT, 'connecting', () =>
+        transport.close(),
+      );
+      return new SshClient(new Connection(transport), depth);
+    } catch (error) {
+      // A half-open connection is a leaked socket for the rest of the request.
       await transport.close();
       throw error;
     }
   }
 
-  async #authenticate(username: string, auth: Authentication): Promise<void> {
-    await this.transport.send(new Writer().byte(MSG.SERVICE_REQUEST).string("ssh-userauth").build());
-    const accepted = await this.transport.receive();
-    if (accepted[0] !== MSG.SERVICE_ACCEPT) throw new Error(`the server refused ssh-userauth (message ${accepted[0]})`);
-
-    if (auth.kind === "password") {
-      await this.transport.send(
-        new Writer()
-          .byte(MSG.USERAUTH_REQUEST)
-          .string(username)
-          .string(SERVICE)
-          .string("password")
-          .bool(false)
-          .string(auth.password)
-          .build(),
-      );
-    } else {
-      const key = await parseOpenSshPrivateKey(auth.privateKey, auth.passphrase);
-      // The signature covers the session id as well as the request, so a
-      // captured request cannot be replayed onto another connection.
-      const request = new Writer()
-        .byte(MSG.USERAUTH_REQUEST)
-        .string(username)
-        .string(SERVICE)
-        .string("publickey")
-        .bool(true)
-        .string(ED25519)
-        .string(key.publicKeyBlob)
-        .build();
-      const signed = new Writer().string(this.transport.sessionId).raw(request).build();
-      const signature = new Uint8Array(await subtle.sign({ name: "Ed25519" }, key.signingKey, signed));
-      await this.transport.send(
-        new Writer().raw(request).string(new Writer().string(ED25519).string(signature).build()).build(),
-      );
-    }
-
-    for (;;) {
-      const reply = await this.transport.receive();
-      // The first byte of every payload is the message type.
-      const type = reply[0];
-      if (type === MSG.USERAUTH_BANNER) continue;
-      if (type === MSG.USERAUTH_SUCCESS) return;
-      if (type === MSG.USERAUTH_FAILURE) {
-        const reader = new Reader(reply.subarray(1));
-        const methods = reader.nameList().join(", ");
-        const what = auth.kind === "password" ? "password" : "key";
-        throw new Error(`the server rejected the ${what} for "${username}"; it will accept ${methods}`);
-      }
-      throw new Error(`unexpected message ${type} while authenticating`);
-    }
+  /** Opens a session channel and starts `start` on it. */
+  async #session(options: SessionOptions, start: string, data?: Uint8Array): Promise<Session> {
+    return prepare(await this.connection.open('session'), options, start, data);
   }
 
-  /** Starts an SFTP session on its own channel. Close it with `end()`. */
-  sftp(): Promise<Sftp> {
-    return Sftp.open(this.transport);
+  /** Starts a command and hands back its streams, for output too large to hold or input to feed. */
+  spawn(command: string, options: SessionOptions = {}): Promise<Session> {
+    return this.#session(options, 'exec', new Writer().string(command).build());
+  }
+
+  /** An interactive shell, with a pty unless `pty: false` is asked for. */
+  shell(options: SessionOptions = {}): Promise<Session> {
+    return this.#session({ ...options, pty: options.pty ?? true }, 'shell');
+  }
+
+  /** A subsystem by name, such as `sftp` or `netconf`. */
+  subsystem(name: string, options: SessionOptions = {}): Promise<Session> {
+    return this.#session(options, 'subsystem', new Writer().string(name).build());
   }
 
   /** Runs one command and reads it to the end. */
   async exec(command: string, options: ExecOptions = {}): Promise<CommandResult> {
     const limit = options.maxOutputBytes ?? 1024 * 1024;
-    const channel = this.#nextChannel++;
+    options.signal?.throwIfAborted();
+    const session = await this.spawn(command, options);
+    const abort = () =>
+      void session
+        .signal('KILL')
+        .finally(() => session.close())
+        .catch(() => {});
+    options.signal?.addEventListener('abort', abort, { once: true });
 
-    await this.transport.send(
-      new Writer()
-        .byte(MSG.CHANNEL_OPEN)
-        .string("session")
-        .uint32(channel)
-        .uint32(WINDOW_SIZE)
-        .uint32(MAX_PACKET)
-        .build(),
-    );
-
-    let peerChannel = 0;
-    for (;;) {
-      const reply = await this.transport.receive();
-      const type = reply[0];
-      if (type === MSG.CHANNEL_OPEN_CONFIRMATION) {
-        const reader = new Reader(reply.subarray(1));
-        reader.uint32();
-        peerChannel = reader.uint32();
-        break;
+    const result: CommandResult = { stdout: '', stderr: '', exitStatus: null, truncated: false };
+    /** Both streams are read to the end: past the cap they are drained, or the window would stall. */
+    const collect = async (stream: ReadableStream<Uint8Array>, into: 'stdout' | 'stderr') => {
+      const decoder = new TextDecoder();
+      let kept = 0;
+      for await (const chunk of stream) {
+        const room = limit - kept;
+        if (chunk.length > room) result.truncated = true;
+        if (room > 0) {
+          result[into] += decoder.decode(chunk.subarray(0, room), { stream: true });
+          kept += Math.min(room, chunk.length);
+        }
       }
-      if (type === MSG.CHANNEL_OPEN_FAILURE) {
-        const reader = new Reader(reply.subarray(1));
-        reader.uint32();
-        throw new Error(`the server would not open a session (reason ${reader.uint32()}): ${reader.text()}`);
-      }
-      throw new Error(`unexpected message ${type} while opening a channel`);
-    }
-
-    await this.transport.send(
-      new Writer().byte(MSG.CHANNEL_REQUEST).uint32(peerChannel).string("exec").bool(true).string(command).build(),
-    );
-    // Nothing is being sent on stdin, and a command that reads it should see
-    // the end rather than wait for one.
-    await this.transport.send(new Writer().byte(MSG.CHANNEL_EOF).uint32(peerChannel).build());
-
-    const decoder = new TextDecoder();
-    const result: CommandResult = { stdout: "", stderr: "", exitStatus: null, truncated: false };
-    let window = WINDOW_SIZE;
-    let closed = false;
-    let weClosed = false;
-
-    /** Both kinds of output spend the same window; forgetting one stalls the server. */
-    const consume = async (bytes: Uint8Array, stream: "stdout" | "stderr") => {
-      const room = limit - result[stream].length;
-      if (room <= 0) result.truncated = true;
-      else {
-        const text = decoder.decode(bytes.subarray(0, Math.min(bytes.length, room)), { stream: true });
-        result[stream] += text;
-        if (bytes.length > room) result.truncated = true;
-      }
-      window -= bytes.length;
-      if (window < WINDOW_SIZE / 2) {
-        const top = WINDOW_SIZE - window;
-        window = WINDOW_SIZE;
-        await this.transport.send(new Writer().byte(MSG.CHANNEL_WINDOW_ADJUST).uint32(peerChannel).uint32(top).build());
-      }
+      result[into] += decoder.decode();
     };
 
-    while (!closed) {
-      const message = await this.transport.receive();
-      const type = message[0];
-      const reader = new Reader(message.subarray(1));
-      switch (type) {
-        case MSG.CHANNEL_DATA:
-          reader.uint32();
-          await consume(reader.string(), "stdout");
-          break;
-        case MSG.CHANNEL_EXTENDED_DATA:
-          reader.uint32();
-          reader.uint32(); // 1 is stderr; there is nothing else defined
-          await consume(reader.string(), "stderr");
-          break;
-        case MSG.CHANNEL_REQUEST: {
-          reader.uint32();
-          const request = reader.text();
-          const wantReply = reader.bool();
-          if (request === "exit-status") result.exitStatus = reader.uint32();
-          if (request === "exit-signal") result.exitSignal = reader.text();
-          if (wantReply) await this.transport.send(new Writer().byte(MSG.CHANNEL_SUCCESS).uint32(peerChannel).build());
-          break;
+    try {
+      const writer = session.stdin.getWriter();
+      const feeding = (async () => {
+        if (options.stdin !== undefined) {
+          const input =
+            typeof options.stdin === 'string'
+              ? new TextEncoder().encode(options.stdin)
+              : options.stdin;
+          await writer.write(input);
         }
-        case MSG.CHANNEL_CLOSE:
-          // A close is answered with a close, or the server waits for one.
-          if (!weClosed) {
-            weClosed = true;
-            await this.transport.send(new Writer().byte(MSG.CHANNEL_CLOSE).uint32(peerChannel).build());
-          }
-          closed = true;
-          break;
-        case MSG.CHANNEL_EOF:
-        case MSG.CHANNEL_SUCCESS:
-        case MSG.CHANNEL_FAILURE:
-        case MSG.CHANNEL_WINDOW_ADJUST:
-          break;
-        default:
-          throw new Error(`unexpected message ${type} while reading the command's output`);
-      }
+        // A command that reads stdin should see the end rather than wait for one.
+        await writer.close();
+      })().catch(() => {});
+      await Promise.all([
+        collect(session.stdout, 'stdout'),
+        collect(session.stderr, 'stderr'),
+        feeding,
+      ]);
+      const exit = await session.exit;
+      options.signal?.throwIfAborted();
+      result.exitStatus = exit.code;
+      if (exit.signal) result.exitSignal = exit.signal;
+      await session.close();
+      return result;
+    } finally {
+      options.signal?.removeEventListener('abort', abort);
     }
-
-    return result;
   }
 
-  close(): Promise<void> {
-    return this.transport.close();
+  /**
+   * A TCP connection from the server to `host:port` (RFC 4254 §7.2), as a
+   * `ByteSocket`: for a port forward, or to carry the next SSH connection.
+   */
+  forward(host: string, port: number, origin = { host: '127.0.0.1', port: 0 }): Promise<Channel> {
+    return this.connection.open(
+      'direct-tcpip',
+      new Writer().string(host).uint32(port).string(origin.host).uint32(origin.port).build(),
+    );
+  }
+
+  /**
+   * Connects to a host this server can reach, through it. The new client is
+   * checked and authenticated on its own terms — its own host key, its own
+   * credentials — and closing it closes the hop it rides on as well.
+   */
+  async jump(options: JumpOptions): Promise<SshClient> {
+    if (this.depth >= MAX_JUMPS)
+      throw new Error(`a target may sit behind at most ${MAX_JUMPS} jump hosts`);
+    const { host, port = 22, ...rest } = options;
+    const tunnel = await this.forward(host, port);
+    const client = await SshClient.#connect({ ...rest, socket: tunnel }, this.depth + 1);
+    client.#parent = this;
+    return client;
+  }
+
+  /** Starts an SFTP session on its own channel. Close it with `end()`. */
+  async sftp(): Promise<Sftp> {
+    return Sftp.start(await this.subsystem('sftp'));
+  }
+
+  /** Closes this connection, and any jump hosts it was reached through. */
+  async close(): Promise<void> {
+    await this.connection.close();
+    await this.#parent?.close();
   }
 }
 
@@ -271,12 +304,21 @@ export class SshClient {
  * keys, take what it presented, hang up. No credential is involved — the host
  * key is what a server shows everyone before anyone proves anything.
  */
-export async function readHostKey(socket: ByteSocket): Promise<{ hostKey: HostKey; serverVersion: string }> {
-  const transport = new Transport(socket);
+export async function readHostKey(
+  socket: ByteSocket,
+  options: { algorithms?: Algorithms } = {},
+): Promise<{ hostKey: HostKey; serverVersion: string; negotiated: Negotiated }> {
+  const transport = new Transport(
+    socket,
+    options.algorithms ? { algorithms: options.algorithms } : {},
+  );
   try {
-    await transport.exchangeVersions();
-    await transport.keyExchange();
-    return { hostKey: transport.hostKey!, serverVersion: transport.serverVersion };
+    await transport.handshake();
+    return {
+      hostKey: transport.hostKey!,
+      serverVersion: transport.serverVersion,
+      negotiated: transport.negotiated!,
+    };
   } finally {
     await transport.close();
   }

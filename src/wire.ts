@@ -1,6 +1,6 @@
 /**
  * SSH's wire types (RFC 4251 §5). Everything in the protocol is built from
- * these five, so they are worth having exactly right: a `string` is a
+ * these, so they are worth having exactly right: a `string` is a
  * length-prefixed byte array, not text, and an `mpint` is a signed big-endian
  * integer that grows a leading zero when its top bit is set.
  */
@@ -32,18 +32,23 @@ export class Writer {
     return this.#push(out);
   }
 
+  /** uint64, from a number: file sizes and offsets outgrow a uint32, never 2^53. */
+  uint64(value: number): this {
+    return this.uint32(Math.floor(value / 2 ** 32)).uint32(value >>> 0);
+  }
+
   /** Raw bytes, with no length in front of them. */
   raw(value: Uint8Array): this {
     return this.#push(value);
   }
 
   string(value: Uint8Array | string): this {
-    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+    const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
     return this.uint32(bytes.length).#push(bytes);
   }
 
-  nameList(names: string[]): this {
-    return this.string(names.join(","));
+  nameList(names: readonly string[]): this {
+    return this.string(names.join(','));
   }
 
   /** A positive integer: leading zeros dropped, one added back if the top bit is set. */
@@ -84,7 +89,7 @@ export class Reader {
   }
 
   byte(): number {
-    if (this.#at >= this.bytes.length) throw new Error("packet ended early");
+    if (this.#at >= this.bytes.length) throw new Error('packet ended early');
     return this.bytes[this.#at++]!;
   }
 
@@ -93,18 +98,27 @@ export class Reader {
   }
 
   uint32(): number {
-    if (this.#at + 4 > this.bytes.length) throw new Error("packet ended early");
+    if (this.#at + 4 > this.bytes.length) throw new Error('packet ended early');
     const value = this.#view.getUint32(this.#at);
     this.#at += 4;
     return value;
   }
 
-  string(): Bytes {
-    const length = this.uint32();
-    if (this.#at + length > this.bytes.length) throw new Error("packet ended early");
+  uint64(): number {
+    const high = this.uint32();
+    return high * 2 ** 32 + this.uint32();
+  }
+
+  /** Exactly `length` bytes, with no length of their own. */
+  take(length: number): Bytes {
+    if (this.#at + length > this.bytes.length) throw new Error('packet ended early');
     const value = this.bytes.subarray(this.#at, this.#at + length);
     this.#at += length;
     return value;
+  }
+
+  string(): Bytes {
+    return this.take(this.uint32());
   }
 
   text(): string {
@@ -113,15 +127,31 @@ export class Reader {
 
   nameList(): string[] {
     const value = this.text();
-    return value === "" ? [] : value.split(",");
+    return value === '' ? [] : value.split(',');
+  }
+
+  /**
+   * A non-negative mpint's magnitude, the sign byte dropped. Every mpint SSH
+   * sends a client — keys, signatures — is positive, so a negative one is a
+   * malformed packet rather than a value.
+   */
+  mpint(): Bytes {
+    const value = this.string();
+    if (value.length > 0 && value[0]! & 0x80) throw new Error('a negative mpint where none can be');
+    return value[0] === 0 ? value.subarray(1) : value;
   }
 
   skipString(): void {
     this.string();
   }
+
+  /** Whatever is left, which some messages end with. */
+  rest(): Bytes {
+    return this.take(this.bytes.length - this.#at);
+  }
 }
 
-export function concat(parts: Uint8Array[]): Bytes {
+export function concat(parts: readonly Uint8Array[]): Bytes {
   const total = parts.reduce((sum, part) => sum + part.length, 0);
   const out = new Uint8Array(total);
   let at = 0;
@@ -130,4 +160,23 @@ export function concat(parts: Uint8Array[]): Bytes {
     at += part.length;
   }
   return out;
+}
+
+/** Left-pads a big-endian integer to `length` bytes, refusing one that does not fit. */
+export function fixedLength(value: Uint8Array, length: number): Bytes {
+  let start = 0;
+  while (start < value.length - length && value[start] === 0) start++;
+  const trimmed = value.subarray(start);
+  if (trimmed.length > length)
+    throw new Error(`a ${trimmed.length}-byte integer where ${length} fit`);
+  const out = new Uint8Array(length);
+  out.set(trimmed, length - trimmed.length);
+  return out;
+}
+
+export function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let index = 0; index < a.length; index++) difference |= a[index]! ^ b[index]!;
+  return difference === 0;
 }
