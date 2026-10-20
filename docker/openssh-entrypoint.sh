@@ -29,6 +29,10 @@ done
   echo "PubkeyAuthentication yes"
   echo "AllowTcpForwarding yes"
   echo "MaxAuthTries 20"
+  # CentOS looks every client up in DNS and tries GSSAPI first, each a
+  # timeout away in a container; neither is what the matrix tests.
+  echo "UseDNS no"
+  echo "GSSAPIAuthentication no"
   echo "Subsystem sftp internal-sftp"
   echo "LogLevel VERBOSE"
   # Re-key every megabyte, so any transfer in the matrix crosses a key exchange.
@@ -39,7 +43,13 @@ done
   echo "Match User twofactor"
   echo "  AuthenticationMethods publickey,keyboard-interactive"
 } > /etc/ssh/sshd_config
+# An older sshd refuses the whole file over one option it does not know
+# (KbdInteractiveAuthentication came in 8.7), so those are dropped one by one.
+sshd="$(command -v sshd.pam || echo /usr/sbin/sshd)"
+for option in KbdInteractiveAuthentication GSSAPIAuthentication; do
+  "$sshd" -t -f /etc/ssh/sshd_config 2>/dev/null || sed -i "/^$option /d" /etc/ssh/sshd_config
+done
 # Ubuntu's PAM asks for nothing more; Alpine's needs a stack for sshd.
 [ -f /etc/pam.d/sshd ] || printf 'auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_unix.so\n' > /etc/pam.d/sshd
 # Alpine names the PAM build sshd.pam.
-exec "$(command -v sshd.pam || echo /usr/sbin/sshd)" -D -e
+exec "$sshd" -D -e

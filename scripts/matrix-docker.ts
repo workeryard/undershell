@@ -10,6 +10,8 @@ const KEYS = join(ROOT, '.cache/matrix/keys');
 const NETWORK = 'undershell-matrix';
 
 export interface Server {
+  /** The base image, for the distributions built from openssh.Dockerfile. */
+  base?: string;
   name: string;
   image: string;
   port: number;
@@ -45,6 +47,24 @@ export const SERVERS: Server[] = [
       'rsa-sha2-512': '/etc/dropbear/rsa.pub',
     },
   },
+  // The distributions people run servers on, each with its own build of
+  // OpenSSH: Debian old and current, and the RHEL family, CentOS 7's 7.4
+  // without strict KEX and Rocky 9 under crypto-policies.
+  ...(
+    [
+      ['openssh-debian12', 'debian:12', 2314],
+      ['openssh-debian10', 'debian:10', 2315],
+      ['openssh-centos7', 'centos:7', 2316],
+      ['openssh-rocky9', 'rockylinux:9', 2317],
+    ] as const
+  ).map(([name, base, port]) => ({
+    name,
+    image: `undershell-openssh:${base.replace(':', '-')}`,
+    base,
+    port,
+    openssh: true,
+    hostKeys: opensshKeys(),
+  })),
 ];
 
 function opensshKeys(): Record<string, string> {
@@ -100,6 +120,11 @@ export function setUp(): void {
     ['undershell-openssh:latest', 'openssh.Dockerfile', []],
     ['undershell-openssh:ubuntu20', 'openssh.Dockerfile', ['--build-arg', 'BASE=ubuntu:20.04']],
     ['undershell-dropbear', 'dropbear.Dockerfile', []],
+    ...SERVERS.flatMap((server) =>
+      server.base
+        ? [[server.image, 'openssh.Dockerfile', ['--build-arg', `BASE=${server.base}`]] as const]
+        : [],
+    ),
   ] as const) {
     docker(
       'build',
