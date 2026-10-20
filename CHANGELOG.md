@@ -5,7 +5,7 @@ Notable changes, newest first. The format follows
 [Semantic Versioning](https://semver.org/) — until 1.0.0, a minor version may
 change the API.
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-21
 
 The first release, from the SSH client Flowker carried in `packages/ssh`.
 That client ran one command or one SFTP session per connection, with

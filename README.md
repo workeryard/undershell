@@ -98,7 +98,7 @@ const client = await connect({
 ```
 
 Anything that gives two byte streams works with the core instead,
-underfetch's proxy tunnel for one:
+[underfetch](https://github.com/workeryard/underfetch)'s proxy tunnel for one:
 
 ```ts
 import { SshClient } from '@workeryard/undershell';
