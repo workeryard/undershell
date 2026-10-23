@@ -7,6 +7,15 @@ platform's documentation. Newest first within each section.
 
 ## Taken
 
+**A browser terminal's session in a Durable Object** (2026-10-24). A
+Worker's WebSocket is one request with one CPU budget for its whole life;
+a Durable Object's budget starts again with every message, and in a
+terminal every keystroke is one. Measured on a deployed copy of
+`examples/terminal`: 17 ms of CPU to connect and log in, about 20 ms per
+megabyte printed, under a millisecond per keystroke. The open SSH
+connection keeps the object from hibernating, so the example closes a
+session after 15 minutes without input.
+
 **server-sig-algs chooses RSA's hash and nothing else** (2026-10-21).
 OpenSSH 7.4, as CentOS 7 ships it, lists only `rsa-sha2-256,rsa-sha2-512`
 there and still accepts ed25519 and ECDSA keys. Filtering a key's
@@ -122,3 +131,11 @@ for both.
   each a timeout away in a container; the matrix turns both off.
 - An sshd older than 8.7 refuses its whole config over
   `KbdInteractiveAuthentication`, which it does not know.
+- A Durable Object's server-side WebSocket, on compatibility date
+  2026-09-21, hands binary messages over as Blobs unless `binaryType` is
+  set to `'arraybuffer'`; a `Uint8Array` made from a Blob is empty, so every
+  keystroke of the first version of the terminal example was lost.
+  `webSocketStream` already set it, and reads Blobs in order anyway.
+- segfault.net (THC's disposable root servers, OpenSSH 9.9) works:
+  password login, a pty shell and its interactive screens. Its gateway
+  answers no `exec` without a pty.

@@ -13,7 +13,7 @@ TOKEN_FILE ?= .probe-token
 
 .DEFAULT_GOAL := help
 .PHONY: help install check test typecheck typecheck-workers lint format matrix consumer-check \
-        routeros blowfish dev deploy probe-token live clean
+        routeros terminal-check blowfish dev deploy probe-token live clean
 
 help: ## list the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -62,6 +62,11 @@ matrix: ## the Docker matrix: OpenSSH latest and 8.2, Dropbear, a bastion
 # checked to work, RouterOS 6 to be refused in words that say why.
 routeros: ## MikroTik RouterOS 7 and 6, as the CHR image runs them
 	pnpm -s tsx scripts/routeros.ts
+
+# The browser terminal example, driven in Chromium. Needs the page running
+# (cd examples/terminal && npx wrangler dev --port 8820) and a Chrome.
+terminal-check: ## drive examples/terminal in Chromium [TERMINAL_URL= TERMINAL_TOKEN= CHROME=]
+	pnpm -s tsx examples/terminal/check.ts
 
 blowfish: ## regenerate Blowfish's constants from π
 	pnpm -s tsx scripts/blowfish-constants.ts

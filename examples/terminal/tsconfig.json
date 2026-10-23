@@ -1,0 +1,17 @@
+{
+  // This example as a Worker compiles it, against @cloudflare/workers-types
+  // (fetched by `make typecheck-workers`), not the DOM.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "types": ["@cloudflare/workers-types"],
+    "typeRoots": ["../../.cache/workers-types/node_modules"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts", "../../src/**/*.ts"],
+  "exclude": ["../../src/workers/sockets.d.ts", "check.ts", "measure.ts"]
+}

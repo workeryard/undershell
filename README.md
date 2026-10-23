@@ -313,6 +313,22 @@ enforce the block.
 Every `connect()` to a socket counts as a subrequest of the request that
 opened it.
 
+### A terminal in the browser
+
+[`examples/terminal`](examples/terminal) puts xterm.js on a page and the
+shell in a Durable Object, one per tab: keystrokes go to `shell.stdin`,
+output comes back from `shell.stdout`, and xterm.js's resize becomes
+`shell.resize()`. It is checked in Chromium, typing, resizing, `top` and
+3 MB of output included, and its README has what a session cost when
+measured on a deployed Worker: 17 ms of CPU to connect and log in, about
+20 ms per megabyte of output.
+
+Keep the server, the user and the key in the Worker's configuration, not in
+what the browser sends, or the page is an open SSH proxy. In the Durable
+Object set the server-side WebSocket's `binaryType` to `'arraybuffer'`: on a
+recent compatibility date binary messages arrive as Blobs, and a
+`Uint8Array` made from a Blob is empty.
+
 ## Servers it has been run against
 
 Every one of these, before 0.1.0, through the checks under

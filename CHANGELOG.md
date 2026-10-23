@@ -5,6 +5,14 @@ Notable changes, newest first. The format follows
 [Semantic Versioning](https://semver.org/) — until 1.0.0, a minor version may
 change the API.
 
+## Unreleased
+
+### Added
+
+- `examples/terminal`: xterm.js in the browser and a shell in a Durable
+  Object, checked in Chromium (typing, resizing, `top`, 3 MB of output),
+  with what a session cost on a deployed Worker. Not part of the package.
+
 ## 0.1.1 — 2026-10-21
 
 The code is 0.1.0's; this release is for what npm shows.

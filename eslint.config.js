@@ -23,7 +23,7 @@ const noModuleState = [
 }));
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/', '.wrangler/', '.cache/'] },
+  { ignores: ['**/node_modules/', '**/.wrangler/', '.cache/'] },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {

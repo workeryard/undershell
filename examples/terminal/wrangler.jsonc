@@ -1,0 +1,25 @@
+{
+  // The terminal example. SSH_KEY and TERMINAL_TOKEN are secrets
+  // (`wrangler secret put`, or .dev.vars for wrangler dev); the rest is here.
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "undershell-terminal",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-21",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "TERMINAL", "class_name": "TerminalSession" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TerminalSession"] }],
+  // One session's keystrokes each start a fresh 30 s budget; a burst of
+  // output is one long stretch of decrypting, so the ceiling is raised.
+  "limits": { "cpu_ms": 300000 },
+  // Placeholders: 203.0.113.10 is TEST-NET-3 (RFC 5737), an address kept for
+  // documentation that no real host has. Put your own server here.
+  "vars": {
+    "SSH_USER": "deploy",
+    "SSH_HOST": "203.0.113.10",
+    "SSH_PORT": "22",
+    "SSH_HOST_KEY": "SHA256:replace-with-ssh-keygen-lf-output",
+    "IDLE_MINUTES": "15",
+  },
+}
