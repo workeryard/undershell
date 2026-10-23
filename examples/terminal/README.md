@@ -64,16 +64,25 @@ copy and reads the CPU Cloudflare reports from `wrangler tail`. Measured on
 | 30 MB printed               | 563–599 ms | 6.6–6.7 s |
 
 About 20 ms of CPU per megabyte of output and under a millisecond per
-keystroke. Against the limits Cloudflare documents (Workers limits page,
-updated 2026-10-12; Durable Objects limits, updated 2026-06-01):
+keystroke. Against the limits Cloudflare documents (Workers limits,
+updated 2026-10-12; Durable Objects limits, 2026-06-01; Durable Objects
+pricing, 2026-10-18):
 
 - **Duration** has no limit while the browser stays connected. A runtime
   update or a deploy gives open connections up to 20 minutes, then may end
   them: run `tmux` on the server so a session survives a reconnect.
-- **CPU** is 30 s by default on Workers Paid, raised here to 5 minutes, and
-  a Durable Object's budget starts again with each WebSocket message. Even
-  a single burst of output would need gigabytes to reach it. The Free plan's
-  10 ms is less than the handshake alone.
-- **Billing**: a Durable Object holding an open SSH connection cannot
-  hibernate, so it is billed for as long as the session is open. The idle
-  limit is what keeps a forgotten tab from costing anything.
+- **CPU** for a Durable Object is 30 s per request or WebSocket message, on
+  the Free plan as on Paid, and starts again with each message; the heaviest
+  session measured, 30 MB at once, used 0.6 s of it. This is why the session
+  lives in a Durable Object: in the Worker itself the Free plan allows 10 ms
+  for the whole WebSocket, less than the 17 ms handshake.
+- **The Free plan's real limit is its daily allowance**: 13,000 GB-s of
+  duration and 100,000 requests a day, reset at 00:00 UTC, after which new
+  operations fail. A Durable Object holding an open SSH connection cannot
+  hibernate, so it is billed for as long as the session is open; at 128 MB
+  that is about 28 hours of open sessions a day, all of them together. The
+  idle limit is what keeps a forgotten tab from spending it.
+
+This was measured on one account and run on it; the Free plan's CPU for
+Durable Objects is what the documentation says, not something tested on a
+Free account.

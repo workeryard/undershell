@@ -14,7 +14,9 @@ terminal every keystroke is one. Measured on a deployed copy of
 `examples/terminal`: 17 ms of CPU to connect and log in, about 20 ms per
 megabyte printed, under a millisecond per keystroke. The open SSH
 connection keeps the object from hibernating, so the example closes a
-session after 15 minutes without input.
+session after 15 minutes without input. A Durable Object's 30 s per message
+holds on the Free plan too, by Cloudflare's documentation; in the Worker
+itself the Free plan's 10 ms would not cover the handshake.
 
 **server-sig-algs chooses RSA's hash and nothing else** (2026-10-21).
 OpenSSH 7.4, as CentOS 7 ships it, lists only `rsa-sha2-256,rsa-sha2-512`

@@ -10,9 +10,8 @@
     "bindings": [{ "name": "TERMINAL", "class_name": "TerminalSession" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TerminalSession"] }],
-  // One session's keystrokes each start a fresh 30 s budget; a burst of
-  // output is one long stretch of decrypting, so the ceiling is raised.
-  "limits": { "cpu_ms": 300000 },
+  // No CPU limit raised: a Durable Object has 30 s per message on every plan,
+  // and 30 MB printed at once took 0.6 s of it (see README.md).
   // Placeholders: 203.0.113.10 is TEST-NET-3 (RFC 5737), an address kept for
   // documentation that no real host has. Put your own server here.
   "vars": {

@@ -8,7 +8,7 @@
 #   make deploy && make live   the live check from a deployed Worker
 
 PORT ?= 8813
-LIVE_URL   ?= https://undershell-probe.underfetch.workers.dev
+LIVE_URL   ?= https://undershell-probe.workeryard.workers.dev
 TOKEN_FILE ?= .probe-token
 
 .DEFAULT_GOAL := help
