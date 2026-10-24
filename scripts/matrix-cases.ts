@@ -1,6 +1,7 @@
 /** What the matrix does on each connection once it is up: commands, shells, tunnels, files. */
 
 import type { ConnectOptions, SshClient } from '../src/index';
+import { keepaliveCase } from './matrix-keepalive';
 
 export interface Case {
   group: string;
@@ -35,13 +36,14 @@ function pattern(length: number): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-function assert(condition: unknown, message: string): asserts condition {
+export function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
 export function channelCases(server: string, openssh: boolean): Case[] {
   const dir = `/tmp/matrix-${server}`;
   return [
+    keepaliveCase(server),
     {
       group: 'exec',
       name: '3 MB of output, untruncated (window accounting)',

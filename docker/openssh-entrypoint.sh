@@ -33,6 +33,10 @@ done
   # timeout away in a container; neither is what the matrix tests.
   echo "UseDNS no"
   echo "GSSAPIAuthentication no"
+  # OpenSSH 9.8+ turns away an address after enough connections that end
+  # without logging in, and the matrix makes many on purpose: every pairing
+  # a server does not offer, every refused host key.
+  echo "PerSourcePenalties no"
   echo "Subsystem sftp internal-sftp"
   echo "LogLevel VERBOSE"
   # Re-key every megabyte, so any transfer in the matrix crosses a key exchange.
@@ -44,10 +48,14 @@ done
   echo "  AuthenticationMethods publickey,keyboard-interactive"
 } > /etc/ssh/sshd_config
 # An older sshd refuses the whole file over one option it does not know
-# (KbdInteractiveAuthentication came in 8.7), so those are dropped one by one.
+# (KbdInteractiveAuthentication came in 8.7, PerSourcePenalties in 9.8), so
+# each option it names is dropped, and only those.
 sshd="$(command -v sshd.pam || echo /usr/sbin/sshd)"
-for option in KbdInteractiveAuthentication GSSAPIAuthentication; do
-  "$sshd" -t -f /etc/ssh/sshd_config 2>/dev/null || sed -i "/^$option /d" /etc/ssh/sshd_config
+for attempt in 1 2 3 4 5; do
+  complaint=$("$sshd" -t -f /etc/ssh/sshd_config 2>&1) && break
+  option=$(echo "$complaint" | sed -n 's/.*[Bb]ad configuration option: \([A-Za-z]*\).*/\1/p' | head -1)
+  [ -n "$option" ] || break
+  sed -i "/^ *$option /d" /etc/ssh/sshd_config
 done
 # Ubuntu's PAM asks for nothing more; Alpine's needs a stack for sshd.
 [ -f /etc/pam.d/sshd ] || printf 'auth required pam_unix.so\naccount required pam_unix.so\nsession optional pam_unix.so\n' > /etc/pam.d/sshd

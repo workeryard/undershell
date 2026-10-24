@@ -12,6 +12,7 @@
 
 import { connect, openSocket, openTunnel, type SshClient } from '../src/workers/index';
 import type { Authentication } from '../src/index';
+import { kexCases } from './kex-cases';
 
 interface Env {
   PROBE_TOKEN?: string;
@@ -33,6 +34,8 @@ interface Plan {
     key: string;
     lockedKey: { text: string; passphrase: string };
     jump: { host: string; pins: string[] };
+    /** A server behind the bastion that still offers the group exchange. */
+    gex: { host: string; pins: string[] };
   };
 }
 
@@ -249,6 +252,7 @@ function overTunnel(plan: NonNullable<Plan['tunnel']>, results: Cases): void {
     await client.close();
     return `${Date.now() - started} ms to unlock, connect and log in`;
   });
+  kexCases(attempt.bind(null, results), base, plan.gex, key);
   attempt(results, 'tunnel: keyboard-interactive', async () => {
     const client = await base({
       auth: { kind: 'keyboardInteractive', respond: (c) => c.prompts.map(() => 'tester-password') },

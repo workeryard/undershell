@@ -120,6 +120,7 @@ async function main(): Promise<void> {
           passphrase: 'matrix passphrase',
         },
         jump: { host: dropbear.name, pins: pinsOf(dropbear) },
+        gex: { host: SERVERS[1]!.name, pins: pinsOf(SERVERS[1]!) },
       },
     };
     // A quick tunnel's name takes a moment to resolve everywhere.

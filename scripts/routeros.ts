@@ -7,10 +7,12 @@
  *   make routeros          (needs Docker and /dev/kvm)
  *
  * The images are not redistributed here; they are downloaded from
- * download.mikrotik.com into .cache/chr/. RouterOS 7 is expected to work.
- * RouterOS 6 offers only finite-field Diffie-Hellman and, by default, SHA-1
- * MACs, none of which this client speaks, so it is expected to be refused,
- * with an error that says what the server offered.
+ * download.mikrotik.com into .cache/chr/. Both are expected to work:
+ * RouterOS 7 with curve25519, RouterOS 6 with what it has, the group
+ * exchange and hmac-sha1, with strong-crypto off and then on.
+ *
+ * RouterOS 6 here shows a new host key on every connection, so its checks
+ * cannot pin one; they record what it showed instead.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -22,8 +24,8 @@ import { openNodeSocket } from './node-socket';
 const ROOT = new URL('..', import.meta.url).pathname;
 const CACHE = join(ROOT, '.cache/chr');
 const VERSIONS = [
-  { version: '7.24.5', port: 2321, works: true },
-  { version: '6.49.23', port: 2322, works: false },
+  { version: '7.24.5', port: 2321 },
+  { version: '6.49.23', port: 2322 },
 ];
 
 const run = (command: string, args: string[]) =>
@@ -208,29 +210,74 @@ async function routerOs7(port: number, fingerprint: string): Promise<void> {
   });
 }
 
+async function routerOs6(port: number): Promise<void> {
+  const seen: string[] = [];
+  const base = async () =>
+    SshClient.connect({
+      socket: await openNodeSocket('127.0.0.1', port),
+      username: 'admin',
+      auth: { kind: 'password', password: '' },
+      // A new key every connection (see above): what it was is recorded, and
+      // only its type is held to.
+      verifyHostKey: (key) => (seen.push(key.fingerprint), key.algorithm === 'ssh-rsa'),
+    });
+  const summary = (client: SshClient) => {
+    const n = client.negotiated;
+    return `${n.kex}, ${n.hostKey}, ${n.cipher}, ${n.mac}`;
+  };
+
+  await check('the defaults: a command, over what RouterOS 6 offers', async () => {
+    const client = await base();
+    try {
+      const version = /version: (\S+)/.exec(
+        (await client.exec('/system resource print')).stdout,
+      )?.[1];
+      if (!version) throw new Error('no version in /system resource print');
+      return `RouterOS ${version}; ${summary(client)}`;
+    } finally {
+      await client.close();
+    }
+  });
+  await check('SFTP: put and get', async () => {
+    const client = await base();
+    const sftp = await client.sftp();
+    try {
+      await sftp.put('/undershell.txt', new TextEncoder().encode('hello router'));
+      const back = new TextDecoder().decode(await sftp.get('/undershell.txt'));
+      if (back !== 'hello router') throw new Error(`got ${back}`);
+    } finally {
+      await sftp.end();
+      await client.close();
+    }
+  });
+  await check('strong-crypto on, set over this client, and still in', async () => {
+    const setter = await base();
+    await setter.exec('/ip ssh set strong-crypto=yes');
+    await setter.close();
+    const client = await base();
+    try {
+      const ok = (await client.exec(':put ok')).stdout.trim();
+      if (ok !== 'ok') throw new Error(`printed ${ok}`);
+      return summary(client);
+    } finally {
+      await client.close();
+    }
+  });
+  await check('its host key, connection by connection', () => {
+    const distinct = new Set(seen).size;
+    return Promise.resolve(`${distinct} different keys in ${seen.length} connections`);
+  });
+}
+
 async function main(): Promise<void> {
-  for (const { version, port, works } of VERSIONS) {
+  for (const { version, port } of VERSIONS) {
     console.log(`\nRouterOS ${version}`);
     start(version, port);
     try {
-      const fingerprint = await pin(port);
-      if (works) {
-        await routerOs7(port, fingerprint);
-      } else {
-        await check('refused, saying what the server offers', async () => {
-          const error = await SshClient.connect({
-            socket: await openNodeSocket('127.0.0.1', port),
-            username: 'admin',
-            auth: { kind: 'password', password: '' },
-            hostKeyFingerprint: fingerprint,
-          }).then(
-            async (client) => (await client.close(), null),
-            (caught: Error) => caught,
-          );
-          if (!error || !/offers no key exchange/.test(error.message))
-            throw new Error(error?.message ?? 'it connected');
-          return error.message.slice(0, 120);
-        });
+      if (version.startsWith('7')) await routerOs7(port, await pin(port));
+      else {
+        await pin(port); // waits for it to boot
+        await routerOs6(port);
       }
     } finally {
       stop(version);
