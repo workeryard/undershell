@@ -6,7 +6,7 @@
 
 import { authenticate, type Authentication } from './auth';
 import type { Channel } from './connection/channel';
-import { Connection } from './connection/connection';
+import { Connection, type Keepalive } from './connection/connection';
 import { prepare, type Session, type SessionOptions } from './connection/session';
 import { Sftp } from './sftp/sftp';
 import type { Algorithms } from './transport/algorithms';
@@ -44,6 +44,12 @@ export interface ConnectOptions extends HostKeyCheck {
   timeoutMs?: number;
   /** Re-key after this many bytes either way. Default 1 GiB, as RFC 4344 advises. */
   rekeyAfterBytes?: number;
+  /**
+   * Ask the server every so often whether it is still there, as ssh's
+   * ServerAliveInterval does, and give the connection up after `maxMissed`
+   * unanswered asks. Off unless given.
+   */
+  keepalive?: Keepalive;
 }
 
 export interface JumpOptions extends Omit<ConnectOptions, 'socket'> {
@@ -176,7 +182,7 @@ export class SshClient {
       await withDeadline(login(), options.timeoutMs ?? DEFAULT_TIMEOUT, 'connecting', () =>
         transport.close(),
       );
-      return new SshClient(new Connection(transport), depth);
+      return new SshClient(new Connection(transport, options.keepalive), depth);
     } catch (error) {
       // A half-open connection is a leaked socket for the rest of the request.
       await transport.close();

@@ -8,7 +8,7 @@ export type {
 } from './client';
 export { AuthenticationError, type Authentication, type Challenge, type Prompt } from './auth';
 export { Channel, type ExitStatus } from './connection/channel';
-export { ChannelOpenError } from './connection/connection';
+export { ChannelOpenError, type Keepalive } from './connection/connection';
 export { Session, type PtyOptions, type SessionOptions } from './connection/session';
 export { parsePrivateKey } from './keys/pem';
 export type { PrivateKey } from './keys/private-key';

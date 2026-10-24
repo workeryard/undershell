@@ -23,6 +23,13 @@ export class ChannelOpenError extends Error {
   }
 }
 
+export interface Keepalive {
+  /** How often to ask, when nothing else has been heard from the server. */
+  intervalMs: number;
+  /** Unanswered asks in a row before the connection is given up. Default 3. */
+  maxMissed?: number;
+}
+
 interface Opening {
   resolve(channel: Channel): void;
   reject(error: unknown): void;
@@ -34,24 +41,62 @@ export class Connection {
   readonly #channels = new Map<number, Channel>();
   readonly #opening = new Map<number, Opening>();
   readonly #ended: Promise<void>;
+  #keepalive: ReturnType<typeof setInterval> | undefined;
+  #unanswered = 0;
   readonly #host = {
     send: (payload: Bytes) => this.transport.send(payload),
     fail: (error: unknown) => this.#fail(error),
     forget: (id: number) => this.#channels.delete(id),
   };
 
-  constructor(readonly transport: Transport) {
+  constructor(
+    readonly transport: Transport,
+    keepalive?: Keepalive,
+  ) {
     this.#ended = this.#pump();
+    if (keepalive) this.#startKeepalive(keepalive);
   }
 
-  /** Settles when the connection has ended, with the error that ended it, if one did. */
+  /**
+   * keepalive@openssh.com, as ssh's ServerAliveInterval sends it: a global
+   * request any server answers, if only to refuse it. Anything heard from
+   * the server counts as an answer; silence for maxMissed intervals ends the
+   * connection, rather than leaving it to hang until TCP notices.
+   */
+  #startKeepalive({ intervalMs, maxMissed = 3 }: Keepalive): void {
+    if (!(intervalMs > 0))
+      throw new Error('keepalive.intervalMs must be a positive number of milliseconds');
+    const ask = new Writer()
+      .byte(MSG.GLOBAL_REQUEST)
+      .string('keepalive@openssh.com')
+      .bool(true)
+      .build();
+    this.#keepalive = setInterval(() => {
+      if (this.#unanswered >= maxMissed) {
+        this.#fail(
+          new Error(`the server answered none of ${maxMissed} keepalives, ${intervalMs} ms apart`),
+        );
+        return;
+      }
+      this.#unanswered++;
+      this.transport.send(ask).catch((error: unknown) => this.#fail(error));
+    }, intervalMs);
+    // In Node, a keepalive alone should not keep the process running.
+    (this.#keepalive as { unref?(): void }).unref?.();
+  }
+
+  /** Settles when the connection has ended, closed or failed; it never rejects. */
   get ended(): Promise<void> {
     return this.#ended;
   }
 
   async #pump(): Promise<void> {
     try {
-      for (;;) this.#dispatch(await this.transport.receive());
+      for (;;) {
+        const message = await this.transport.receive();
+        this.#unanswered = 0;
+        this.#dispatch(message);
+      }
     } catch (error) {
       this.#fail(error);
     }
@@ -60,6 +105,7 @@ export class Connection {
   #fail(error: unknown): void {
     if (this.#failure) return;
     this.#failure = error;
+    if (this.#keepalive !== undefined) clearInterval(this.#keepalive);
     for (const channel of [...this.#channels.values()]) channel.end(error);
     for (const opening of this.#opening.values()) opening.reject(error);
     this.#opening.clear();
