@@ -48,7 +48,7 @@ function keysFor(cipher: CipherName, mac: MacName) {
 function reference(cipher: CipherName, mac: MacName, keys: ReturnType<typeof keysFor>) {
   const bits = keys.key.length * 8;
   const etm = mac.endsWith('-etm@openssh.com');
-  const hash = mac.includes('512') ? 'sha512' : 'sha256';
+  const hash = mac.startsWith('hmac-sha1') ? 'sha1' : mac.includes('512') ? 'sha512' : 'sha256';
   const iv = Buffer.from(keys.iv);
   let gcmCounter = iv.readBigUInt64BE(4);
   const ctr = isGcm(cipher)
@@ -75,7 +75,7 @@ function reference(cipher: CipherName, mac: MacName, keys: ReturnType<typeof key
       }
       const seq = Buffer.alloc(4);
       seq.writeUInt32BE(sequence);
-      const macLength = hash === 'sha512' ? 64 : 32;
+      const macLength = hash === 'sha512' ? 64 : hash === 'sha1' ? 20 : 32;
       if (etm) {
         const length = wire.readUInt32BE(0);
         const body = wire.subarray(4, 4 + length);

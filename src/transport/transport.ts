@@ -22,8 +22,8 @@ import {
 } from './algorithms';
 import { Buffered, type ByteSocket } from './buffered';
 import { PLAIN, type Opener, type Sealer } from './cipher';
-import { deriveCiphers, exchangeHash, kexinit, negotiate } from './exchange';
-import { agreement } from './kex';
+import { deriveCiphers, kexinit, negotiate } from './exchange';
+import { runKex } from './kex';
 import { disconnected, MSG, serverSignatureAlgorithms, toError } from './messages';
 
 export const CLIENT_VERSION = 'SSH-2.0-undershell_0.1';
@@ -271,34 +271,31 @@ export class Transport {
     if (strict && this.#sequenceIn !== 1)
       throw new Error('strict KEX: the server sent something before KEXINIT');
 
-    const ecdh = await agreement(chosen.kex);
-    void this.#enqueue(
-      new Writer().byte(MSG.KEX_ECDH_INIT).string(ecdh.clientPublic).build(),
-    ).catch(() => {});
-    if (chosen.dropGuess) await this.#readPacket();
-
-    const reply = new Reader((await this.#expect(MSG.KEX_ECDH_REPLY, strict)).subarray(1));
-    const hostKeyBlob = reply.string();
-    const serverPublic = reply.string();
-    const signature = reply.string();
-    const secret = new Writer().mpint(await ecdh.secret(serverPublic)).build();
-    const hash = await exchangeHash(ecdh.hash, {
-      clientVersion: CLIENT_VERSION,
-      serverVersion: this.serverVersion,
-      ours,
-      theirs,
-      hostKeyBlob,
-      clientPublic: ecdh.clientPublic,
-      serverPublic,
-      secret,
-    });
+    // A server that guessed our choice wrong already sent a key exchange
+    // packet of its own, which RFC 4253 §7 says to drop: the first read does.
+    let dropGuess = chosen.dropGuess;
+    const result = await runKex(
+      chosen.kex,
+      {
+        send: (payload) => void this.#enqueue(payload).catch(() => {}),
+        expect: async (type) => {
+          if (dropGuess) {
+            dropGuess = false;
+            await this.#readPacket();
+          }
+          return this.#expect(type, strict);
+        },
+      },
+      { clientVersion: CLIENT_VERSION, serverVersion: this.serverVersion, ours, theirs },
+    );
+    const { hostKeyBlob, signature, secret, exchangeHash: hash } = result;
     if (!(await verifySignature(chosen.hostKey, hostKeyBlob, signature, hash))) {
       throw new Error("the server's signature over the exchange hash does not check out");
     }
     await this.#acceptHostKey(chosen.hostKey, hostKeyBlob);
     if (first) this.sessionId = hash;
     const { outgoing, incoming } = await deriveCiphers(
-      ecdh.hash,
+      result.hash,
       secret,
       hash,
       this.sessionId,

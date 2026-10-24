@@ -18,7 +18,7 @@
 import { randomBytes, subtle } from '../crypto';
 import { concat, Writer, type Bytes } from '../wire';
 import type { Buffered } from './buffered';
-import { isGcm, type CipherName, type MacName } from './algorithms';
+import { isGcm, type CipherName, type MacName, macSpec } from './algorithms';
 
 /** Larger than any server sends (OpenSSH's own limit is 256 KiB). */
 export const MAX_PACKET = 1024 * 1024;
@@ -147,7 +147,7 @@ class CtrHmac implements Sealer, Opener {
     mac: MacName,
     private readonly etm: boolean,
   ) {
-    this.#macLength = mac.includes('512') ? 64 : 32;
+    this.#macLength = macSpec(mac).length;
   }
 
   async #xor(data: Bytes): Promise<Bytes> {
@@ -226,7 +226,7 @@ export function keyLengths(
 ): { iv: number; key: number; mac: number } {
   const key = cipher.startsWith('aes256') ? 32 : cipher.startsWith('aes192') ? 24 : 16;
   if (isGcm(cipher)) return { iv: 12, key, mac: 0 };
-  return { iv: 16, key, mac: mac.includes('512') ? 64 : 32 };
+  return { iv: 16, key, mac: macSpec(mac).length };
 }
 
 export async function packetCipher(
@@ -241,7 +241,7 @@ export async function packetCipher(
   }
   // CTR decryption is encryption of the counter, so either way it encrypts.
   const key = await subtle.importKey('raw', keys.key, { name: 'AES-CTR' }, false, ['encrypt']);
-  const hash = mac.includes('512') ? 'SHA-512' : 'SHA-256';
+  const { hash } = macSpec(mac);
   const macKey = await subtle.importKey('raw', keys.macKey, { name: 'HMAC', hash }, false, [
     'sign',
     'verify',

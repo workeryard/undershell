@@ -12,6 +12,12 @@ export const KEX = [
   'curve25519-sha256',
   'curve25519-sha256@libssh.org',
   'ecdh-sha2-nistp256',
+  // Finite-field Diffie-Hellman, last: BigInt arithmetic costs more CPU than
+  // a curve, and only servers with no curve at all, such as RouterOS 6,
+  // need it.
+  'diffie-hellman-group-exchange-sha256',
+  'diffie-hellman-group16-sha512',
+  'diffie-hellman-group14-sha256',
 ] as const;
 
 export const HOST_KEYS = [
@@ -37,6 +43,11 @@ export const MACS = [
   'hmac-sha2-512-etm@openssh.com',
   'hmac-sha2-256',
   'hmac-sha2-512',
+  // Last, for servers that offer nothing better, RouterOS 6 among them.
+  // SHA-1's collisions do not carry over to HMAC, which OpenSSH still
+  // offers by default; SHA-1 signatures and key exchanges stay refused.
+  'hmac-sha1-etm@openssh.com',
+  'hmac-sha1',
 ] as const;
 
 export type KexName = (typeof KEX)[number];
@@ -99,6 +110,13 @@ export function choose<T extends string>(
     );
   }
   return chosen;
+}
+
+/** A MAC's hash, for WebCrypto, and its tag and key length in bytes. */
+export function macSpec(mac: MacName): { hash: 'SHA-1' | 'SHA-256' | 'SHA-512'; length: number } {
+  if (mac.startsWith('hmac-sha1')) return { hash: 'SHA-1', length: 20 };
+  if (mac.includes('512')) return { hash: 'SHA-512', length: 64 };
+  return { hash: 'SHA-256', length: 32 };
 }
 
 export function isGcm(cipher: CipherName): boolean {

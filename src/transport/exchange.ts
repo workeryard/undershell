@@ -85,38 +85,6 @@ export function negotiate(p: Preference, theirs: Bytes): Chosen {
   };
 }
 
-export interface HashInput {
-  clientVersion: string;
-  serverVersion: string;
-  ours: Bytes;
-  theirs: Bytes;
-  hostKeyBlob: Bytes;
-  clientPublic: Bytes;
-  serverPublic: Bytes;
-  /** K, already encoded as an mpint. */
-  secret: Bytes;
-}
-
-/**
- * The exchange hash covers everything both sides have said so far. If one
- * byte of our view differs from the server's, its signature will not check.
- */
-export function exchangeHash(hash: Hash, input: HashInput): Promise<Bytes> {
-  return digest(
-    hash,
-    new Writer()
-      .string(input.clientVersion)
-      .string(input.serverVersion)
-      .string(input.ours)
-      .string(input.theirs)
-      .string(input.hostKeyBlob)
-      .string(input.clientPublic)
-      .string(input.serverPublic)
-      .raw(input.secret)
-      .build(),
-  );
-}
-
 /** The two directions' packet ciphers, from K, H and the session id. */
 export async function deriveCiphers(
   hash: Hash,
