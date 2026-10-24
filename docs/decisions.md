@@ -7,6 +7,29 @@ platform's documentation. Newest first within each section.
 
 ## Taken
 
+**Finite-field Diffie-Hellman, last** (2026-10-24):
+diffie-hellman-group-exchange-sha256 (RFC 4419), and the fixed groups 14
+and 16 of RFC 3526 with SHA-256 and SHA-512 (RFC 8268). WebCrypto has no
+such primitive, so it is BigInt with a 512-bit private exponent, as OpenSSH
+sizes one, checked against OpenSSL for the shared secret. A group exchange
+asks for 2048 to 4096 bits, not OpenSSH's 8192, to bound the CPU: one
+modular exponentiation took about 3 ms at 2048 bits and 9 ms at 4096 in
+Node, and a whole 4096-bit exchange about 30 ms of CPU in a deployed Worker.
+They come after the curves: RouterOS 6, which has no curve, needs the group
+exchange.
+
+**hmac-sha1, after every SHA-2 MAC** (2026-10-24). RouterOS 6.49 offers
+hmac-sha1 and hmac-md5 and nothing else, with strong-crypto on as off.
+SHA-1's weakness is collisions, which do not carry over to HMAC; OpenSSH 10
+still offers it by default. What SHA-1 does break, signatures and the
+group1 and group14-sha1 exchanges, stays refused.
+
+**Keepalives** (2026-10-24), off unless asked for: keepalive@openssh.com
+every `intervalMs`, anything heard from the server counting as an answer,
+and the connection given up after `maxMissed`. Checked on every server in
+the matrix by freezing it with `docker pause`: given up in about 1.4 s with
+`intervalMs: 500, maxMissed: 2`.
+
 **A browser terminal's session in a Durable Object** (2026-10-24). A
 Worker's WebSocket is one request with one CPU budget for its whole life;
 a Durable Object's budget starts again with every message, and in a
@@ -73,21 +96,13 @@ key exchange messages allowed during the first one.
 
 ## Left out
 
-**RouterOS 6** (2026-10-21). It offers finite-field Diffie-Hellman only,
-and by default only SHA-1 and MD5 MACs. With `strong-crypto` it would need
-diffie-hellman-group-exchange-sha256, which WebCrypto has no primitive for;
-it could be done with BigInt. Not in 0.1.0; RouterOS 7 works.
+**SHA-1 signatures and key exchanges** (2026-10-20): `ssh-rsa`, and the
+group1 and group14-sha1 exchanges. OpenSSH 8.8 stopped accepting `ssh-rsa`
+signatures by default; every server tested offers something better.
 
 **ChaCha20-Poly1305** (2026-10-20). WebCrypto has neither ChaCha20 nor
 Poly1305, and a JavaScript implementation would be the one cipher here not
 done by the runtime. Every server seen offers AES as well.
-
-**SHA-1: `ssh-rsa` signatures, `hmac-sha1`, the group1 and group14-sha1
-exchanges** (2026-10-20). OpenSSH 8.8 stopped accepting `ssh-rsa`
-signatures by default; the SHA-1 MAC and exchanges it still offers, but
-always beside SHA-2 ones, on every server in the matrix. Only RouterOS 6
-offered nothing else, and it is refused with an error listing what it
-offered.
 
 **The sntrup761 and ML-KEM hybrid key exchanges** (2026-10-20). OpenSSH
 10 prefers mlkem768x25519-sha256, and RouterOS 7 offers it; WebCrypto has
@@ -105,19 +120,9 @@ passphrase.
 
 ## Open
 
-**diffie-hellman-group-exchange-sha256 and group14-sha256.** RouterOS 6
-with `strong-crypto` offers SHA-2 MACs but no elliptic-curve exchange, so
-it would take a finite-field one. WebCrypto has none; BigInt modular
-exponentiation would do, and has to be measured for CPU on a Worker before
-it is taken.
-
-**Keepalives.** A shell left idle behind a NAT or a load balancer can be
-dropped without either side noticing. OpenSSH's client sends
-keepalive@openssh.com on a timer; a Worker's request has its own lifetime,
-so whether a timer belongs here or in the caller is not settled.
-
 **mlkem768x25519-sha256**, which OpenSSH 10 and RouterOS 7 prefer, once
-WebCrypto in Node and workerd has ML-KEM.
+WebCrypto in Node and workerd has ML-KEM. On 2026-10-24 workerd's WebCrypto
+did not know ML-KEM-768 at all.
 
 **A build for Node.** The package ships TypeScript source, read by a
 bundler or tsx; a project on `NodeNext`, or plain `node`, cannot import it.
@@ -141,3 +146,12 @@ for both.
 - segfault.net (THC's disposable root servers, OpenSSH 9.9) works:
   password login, a pty shell and its interactive screens. Its gateway
   answers no `exec` without a pty.
+- OpenSSH 9.8 and later turn an address away for a while after enough
+  connections that end without logging in (PerSourcePenalties). The matrix
+  makes many on purpose, every pairing a server lacks and every refused host
+  key, and OpenSSH 10.3 began dropping it before its version line once the
+  exchanges that 10.3 no longer offers were added; the test sshd turns the
+  penalties off.
+- RouterOS 6.49.23 on the CHR image showed a different RSA host key on every
+  connection, to ssh-keyscan and to this client alike, from a read-only and
+  a writable image, and after `/ip ssh regenerate-host-key`.

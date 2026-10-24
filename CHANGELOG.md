@@ -5,13 +5,24 @@ Notable changes, newest first. The format follows
 [Semantic Versioning](https://semver.org/) — until 1.0.0, a minor version may
 change the API.
 
-## Unreleased
+## 0.2.0 — unreleased
 
 ### Added
 
+- Finite-field Diffie-Hellman: diffie-hellman-group-exchange-sha256
+  (groups of 2048 to 4096 bits), diffie-hellman-group16-sha512 and
+  diffie-hellman-group14-sha256, offered after the curves. BigInt
+  arithmetic, as WebCrypto has none: about 30 ms of CPU for a 4096-bit
+  exchange in a deployed Worker.
+- hmac-sha1-etm@openssh.com and hmac-sha1, offered last. Together with the
+  group exchange they reach MikroTik RouterOS 6, which offers nothing
+  better, with strong-crypto off and on.
+- `keepalive: { intervalMs, maxMissed }`: keepalive@openssh.com on a timer,
+  and the connection given up when the server stops answering, rather than
+  left hanging.
 - `examples/terminal`: xterm.js in the browser and a shell in a Durable
-  Object, checked in Chromium (typing, resizing, `top`, 3 MB of output),
-  with what a session cost on a deployed Worker. Not part of the package.
+  Object, checked in Chromium, with what a session cost on a deployed
+  Worker. Not part of the package.
 
 ## 0.1.1 — 2026-10-21
 
