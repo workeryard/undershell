@@ -21,7 +21,10 @@ help: ## list the targets
 install: ## install the node dependencies
 	pnpm install
 
-check: ## typecheck, lint and test, as before any commit
+# After typecheck-workers, which fetches the Workers types that the example
+# in examples/terminal is linted against; on a fresh checkout, as in CI,
+# lint would otherwise not know them.
+check: typecheck-workers ## typecheck, lint and test, as before any commit
 	pnpm check
 
 test: ## the tests alone
@@ -48,6 +51,7 @@ typecheck-workers: ## typecheck src/ the way a Worker project compiles it
 	  mv package node_modules/@cloudflare/workers-types && rm -f cloudflare-workers-types-*.tgz; \
 	fi
 	npx tsc -p tsconfig.workers.json
+	npx tsc -p examples/terminal/tsconfig.json
 	@echo "src/ typechecks under @cloudflare/workers-types $$(node -p "require('./$(WORKERS_TYPES)/package.json').version")"
 
 consumer-check: typecheck-workers ## typecheck the packed package as an installing Worker project would
